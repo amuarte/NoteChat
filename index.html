@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatNotes</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div id="menu" class="menu-section">
+            <h1>ChatNotes</h1>
+            <div class="menu-buttons">
+                <button onclick="showCreateForm()">Create new note</button>
+                <button class="secondary" onclick="showLoginForm()">Login</button>
+            </div>
+        </div>
+
+        <div id="createForm" class="form-section">
+            <h2>Create new note</h2>
+            <div class="form-group">
+                <label>Note name:</label>
+                <input type="text" id="createName" placeholder="Enter note name">
+                <div class="error" id="createNameError"></div>
+            </div>
+            <div class="form-group">
+                <label>Password:</label>
+                <input type="password" id="createPassword" placeholder="Enter password">
+            </div>
+            <div class="form-buttons">
+                <button onclick="createNote()">Create</button>
+                <button class="secondary" onclick="backToMenu()">Back</button>
+            </div>
+        </div>
+
+        <div id="loginForm" class="form-section">
+            <h2>Login</h2>
+            <div class="form-group">
+                <label>Note name:</label>
+                <input type="text" id="loginName" placeholder="Enter note name">
+                <div class="error" id="loginNameError"></div>
+            </div>
+            <div class="form-group">
+                <label>Password:</label>
+                <input type="password" id="loginPassword" placeholder="Enter password">
+            </div>
+            <div class="form-buttons">
+                <button onclick="loginNote()">Login</button>
+                <button class="secondary" onclick="backToMenu()">Back</button>
+            </div>
+        </div>
+
+        <div id="editor">
+            <h2>Note editor</h2>
+            <div class="note-name" id="currentNoteName"></div>
+            <textarea id="noteContent" placeholder="Start typing..."></textarea>
+            <div class="editor-buttons">
+                <button onclick="saveNote()">Save</button>
+                <button class="secondary" onclick="refreshNote()">Refresh</button>
+                <button class="secondary" onclick="logout()">Logout</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api';
+        let currentNote = null;
+        let currentPassword = null;
+
+        function showCreateForm() {
+            document.querySelector('.menu-section').style.display = 'none';
+            document.getElementById('createForm').classList.add('active');
+            document.getElementById('createNameError').innerText = '';
+        }
+
+        function showLoginForm() {
+            document.querySelector('.menu-section').style.display = 'none';
+            document.getElementById('loginForm').classList.add('active');
+            document.getElementById('loginNameError').innerText = '';
+        }
+
+        function backToMenu() {
+            document.querySelectorAll('.form-section').forEach(f => f.classList.remove('active'));
+            document.getElementById('editor').classList.remove('active');
+            document.querySelector('.menu-section').style.display = 'block';
+        }
+
+        async function createNote() {
+            const name = document.getElementById('createName').value.trim();
+            const password = document.getElementById('createPassword').value;
+            const errorEl = document.getElementById('createNameError');
+
+            if (!name || !password) {
+                errorEl.innerText = 'Fill all fields';
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/notes/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, password })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    errorEl.innerText = data.error;
+                    return;
+                }
+
+                currentNote = name;
+                currentPassword = password;
+                openEditor();
+            } catch (err) {
+                errorEl.innerText = 'Connection error';
+            }
+        }
+
+        async function loginNote() {
+            const name = document.getElementById('loginName').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            const errorEl = document.getElementById('loginNameError');
+
+            if (!name || !password) {
+                errorEl.innerText = 'Fill all fields';
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/notes/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, password })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    errorEl.innerText = data.error;
+                    return;
+                }
+
+                currentNote = name;
+                currentPassword = password;
+                openEditor();
+                document.getElementById('noteContent').value = data.content;
+            } catch (err) {
+                errorEl.innerText = 'Connection error';
+            }
+        }
+
+        function openEditor() {
+            document.querySelectorAll('.form-section').forEach(f => f.classList.remove('active'));
+            document.getElementById('editor').classList.add('active');
+            document.getElementById('currentNoteName').innerText = `Note: ${currentNote}`;
+        }
+
+        async function saveNote() {
+            if (!currentNote) return;
+
+            try {
+                const res = await fetch(`${API_URL}/notes/${currentNote}/save`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: document.getElementById('noteContent').value,
+                        password: currentPassword
+                    })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    console.log('Note saved');
+                } else {
+                    console.log('Error: ' + data.error);
+                }
+            } catch (err) {
+                console.log('Connection error');
+            }
+        }
+
+        async function refreshNote() {
+            if (!currentNote) return;
+
+            try {
+                const res = await fetch(`${API_URL}/notes/${currentNote}`);
+                const data = await res.json();
+                document.getElementById('noteContent').value = data.content;
+                console.log('Note refreshed');
+            } catch (err) {
+                console.log('Connection error');
+            }
+        }
+
+        function logout() {
+            currentNote = null;
+            currentPassword = null;
+            backToMenu();
+        }
+    </script>
+</body>
+</html>
