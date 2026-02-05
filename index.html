@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChatNotes</title>
+    <title>NoteChat</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 </head>
 <body>
     <div class="container">
         <div id="menu" class="menu-section">
-            <h1>ChatNotes</h1>
+            <h1>NoteChat</h1>
             <div class="menu-buttons">
                 <button onclick="showCreateForm()">Create new note</button>
                 <button class="secondary" onclick="showLoginForm()">Login</button>
@@ -52,9 +53,13 @@
 
         <div id="editor">
             <h2>Note editor</h2>
-            <div class="note-name" id="currentNoteName"></div>
-            <textarea id="noteContent" placeholder="Start typing..." oninput="autoSave()"></textarea>
+            <div class="note-header">
+                <div class="note-name" id="currentNoteName"></div>
+                <div class="connection-status" id="connectionStatus">🟢 Connected</div>
+            </div>
+            <textarea id="noteContent" placeholder="Start typing..."></textarea>
             <div class="editor-buttons">
+                <span id="userCount" class="info-text"></span>
                 <button class="secondary" onclick="logout()">Logout</button>
             </div>
         </div>
@@ -62,9 +67,56 @@
 
     <script>
         const API_URL = 'https://notechat-xoxh.onrender.com/api';
+        let socket = null;
         let currentNote = null;
         let currentPassword = null;
-        let autoRefreshInterval = null;
+        let isUpdatingFromServer = false;
+        let lastLocalChange = 0;
+
+        function initSocket() {
+            socket = io(API_URL.replace('/api', ''), {
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 5
+            });
+
+            socket.on('connect', () => {
+                updateConnectionStatus('🟢 Connected');
+            });
+
+            socket.on('disconnect', () => {
+                updateConnectionStatus('🔴 Disconnected');
+            });
+
+            socket.on('content_update', (data) => {
+                isUpdatingFromServer = true;
+                const textarea = document.getElementById('noteContent');
+                textarea.value = data.content;
+                isUpdatingFromServer = false;
+            });
+
+            socket.on('user_joined', (data) => {
+                updateUserCount(data.users);
+            });
+
+            socket.on('user_left', (data) => {
+                updateUserCount(data.users);
+            });
+
+            socket.on('error', (data) => {
+                console.error('Socket error:', data.message);
+            });
+        }
+
+        function updateConnectionStatus(status) {
+            const el = document.getElementById('connectionStatus');
+            if (el) el.innerText = status;
+        }
+
+        function updateUserCount(count) {
+            const el = document.getElementById('userCount');
+            if (el) el.innerText = `📝 ${count} user(s) editing`;
+        }
 
         function showCreateForm() {
             document.querySelector('.menu-section').style.display = 'none';
@@ -140,8 +192,8 @@
 
                 currentNote = name;
                 currentPassword = password;
-                openEditor();
                 document.getElementById('noteContent').value = data.content || '';
+                openEditor();
             } catch (err) {
                 errorEl.innerText = 'Connection error';
             }
@@ -151,52 +203,38 @@
             document.querySelectorAll('.form-section').forEach(f => f.classList.remove('active'));
             document.getElementById('editor').classList.add('active');
             document.getElementById('currentNoteName').innerText = `Note: ${currentNote}`;
-            startAutoRefresh();
-        }
+            
+            if (!socket) initSocket();
+            
+            socket.emit('join_note', {
+                name: currentNote,
+                password: currentPassword
+            });
 
-        async function autoSave() {
-            if (!currentNote) return;
-
-            try {
-                await fetch(`${API_URL}/notes/${currentNote}/save`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        content: document.getElementById('noteContent').value,
-                        password: currentPassword
-                    })
+            document.getElementById('noteContent').addEventListener('input', () => {
+                if (isUpdatingFromServer) return;
+                
+                lastLocalChange = Date.now();
+                const content = document.getElementById('noteContent').value;
+                
+                socket.emit('content_change', {
+                    name: currentNote,
+                    content: content
                 });
-            } catch (err) {
-                console.log('Auto save failed');
-            }
-        }
-
-        async function autoRefresh() {
-            if (!currentNote) return;
-
-            try {
-                const res = await fetch(`${API_URL}/notes/${currentNote}`);
-                const data = await res.json();
-                const textarea = document.getElementById('noteContent');
-                if (textarea.value !== data.content) {
-                    textarea.value = data.content;
-                }
-            } catch (err) {
-                console.log('Auto refresh failed');
-            }
-        }
-
-        function startAutoRefresh() {
-            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
-            autoRefreshInterval = setInterval(autoRefresh, 2000);
+            });
         }
 
         function logout() {
-            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+            if (socket && currentNote) {
+                socket.emit('leave_note', { name: currentNote });
+            }
             currentNote = null;
             currentPassword = null;
+            document.getElementById('noteContent').value = '';
             backToMenu();
         }
+
+        initSocket();
     </script>
 </body>
 </html>
