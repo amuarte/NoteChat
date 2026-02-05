@@ -12,7 +12,9 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 active_sessions = {}
 
 def get_db():
-    conn = psycopg.connect(DATABASE_URL)
+    if not DATABASE_URL:
+        raise Exception("DATABASE_URL not set")
+    conn = psycopg.connect(DATABASE_URL, connect_timeout=5)
     return conn
 
 def init_db():
@@ -25,11 +27,13 @@ def init_db():
         conn.close()
         print("Database initialized successfully")
     except Exception as e:
-        print(f"Error initializing database: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Database initialization skipped: {e}")
+        pass
 
-init_db()
+try:
+    init_db()
+except:
+    print("Could not initialize database on startup")
 
 @app.route('/')
 def serve_index():
@@ -151,4 +155,5 @@ def on_leave(data):
             emit('user_left', {'users': active_sessions[note_name]['users']}, room=note_name)
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=3000)
+    debug_mode = os.environ.get('FLASK_ENV') == 'development'
+    socketio.run(app, debug=debug_mode, host='0.0.0.0', port=int(os.environ.get('PORT', 3000)))
