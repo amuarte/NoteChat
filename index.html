@@ -12,16 +12,16 @@
         <div id="menu" class="menu-section">
             <h1>NoteChat</h1>
             <div class="menu-buttons">
-                <button onclick="showCreateForm()">Create new note</button>
+                <button onclick="showCreateForm()">Create new room</button>
                 <button class="secondary" onclick="showLoginForm()">Login</button>
             </div>
         </div>
 
         <div id="createForm" class="form-section">
-            <h2>Create new note</h2>
+            <h2>Create new room</h2>
             <div class="form-group">
-                <label>Note name:</label>
-                <input type="text" id="createName" placeholder="Enter note name">
+                <label>Room name:</label>
+                <input type="text" id="createName" placeholder="Enter room name">
                 <div class="error" id="createNameError"></div>
             </div>
             <div class="form-group">
@@ -29,7 +29,7 @@
                 <input type="password" id="createPassword" placeholder="Enter password">
             </div>
             <div class="form-buttons">
-                <button onclick="createNote()">Create</button>
+                <button onclick="createRoom()">Create</button>
                 <button class="secondary" onclick="backToMenu()">Back</button>
             </div>
         </div>
@@ -37,8 +37,8 @@
         <div id="loginForm" class="form-section">
             <h2>Login</h2>
             <div class="form-group">
-                <label>Note name:</label>
-                <input type="text" id="loginName" placeholder="Enter note name">
+                <label>Room name:</label>
+                <input type="text" id="loginName" placeholder="Enter room name">
                 <div class="error" id="loginNameError"></div>
             </div>
             <div class="form-group">
@@ -46,20 +46,21 @@
                 <input type="password" id="loginPassword" placeholder="Enter password">
             </div>
             <div class="form-buttons">
-                <button onclick="loginNote()">Login</button>
+                <button onclick="loginRoom()">Login</button>
                 <button class="secondary" onclick="backToMenu()">Back</button>
             </div>
         </div>
 
-        <div id="editor">
-            <h2>Note editor</h2>
-            <div class="note-header">
-                <div class="note-name" id="currentNoteName"></div>
-                <div class="connection-status" id="connectionStatus">🟢 Connected</div>
+        <div id="chat">
+            <div class="chat-header">
+                <h2 id="currentRoomName"></h2>
+                <div id="connectionStatus">🟢 Connected</div>
             </div>
-            <textarea id="noteContent" placeholder="Start typing..."></textarea>
-            <div class="editor-buttons">
-                <span id="userCount" class="info-text"></span>
+            <div id="messages" class="messages"></div>
+            <div class="chat-input">
+                <input type="text" id="messageInput" placeholder="Type message..." onkeypress="if(event.key === 'Enter') sendMessage()">
+                <button onclick="sendMessage()">Send</button>
+                <button class="secondary" onclick="clearRoom()">Clear All</button>
                 <button class="secondary" onclick="logout()">Logout</button>
             </div>
         </div>
@@ -68,11 +69,8 @@
     <script>
         const API_URL = 'https://notechat-xoxh.onrender.com/api';
         let socket = null;
-        let currentNote = null;
+        let currentRoom = null;
         let currentPassword = null;
-        let isRemoteChange = false;
-        let lastContent = '';
-        let version = 0;
 
         function initSocket() {
             socket = io(API_URL.replace('/api', ''), {
@@ -82,27 +80,24 @@
             });
 
             socket.on('connect', () => {
-                updateConnectionStatus('🟢 Connected');
+                document.getElementById('connectionStatus').innerText = '🟢 Connected';
             });
 
             socket.on('disconnect', () => {
-                updateConnectionStatus('🔴 Disconnected');
+                document.getElementById('connectionStatus').innerText = '🔴 Disconnected';
             });
 
-            socket.on('sync', (data) => {
-                lastContent = data.content;
-                version = data.version;
-                const textarea = document.getElementById('noteContent');
-                textarea.value = data.content;
+            socket.on('new_post', (data) => {
+                addMessageToUI(data.id, data.content, data.created_at);
             });
 
-            socket.on('operation', (data) => {
-                applyRemoteOperation(data.op);
-                version = data.version;
+            socket.on('post_deleted', (data) => {
+                const el = document.querySelector(`[data-id="${data.id}"]`);
+                if (el) el.remove();
             });
 
-            socket.on('user_count', (data) => {
-                updateUserCount(data.count);
+            socket.on('room_cleared', () => {
+                document.getElementById('messages').innerHTML = '';
             });
 
             socket.on('error', (data) => {
@@ -110,40 +105,28 @@
             });
         }
 
-        function applyRemoteOperation(op) {
-            const textarea = document.getElementById('noteContent');
-            const cursorPos = textarea.selectionStart;
+        function addMessageToUI(id, content, createdAt) {
+            const messagesDiv = document.getElementById('messages');
+            const msgEl = document.createElement('div');
+            msgEl.className = 'message';
+            msgEl.setAttribute('data-id', id);
             
-            if (op.type === 'insert') {
-                lastContent = lastContent.slice(0, op.pos) + op.text + lastContent.slice(op.pos);
-                if (cursorPos >= op.pos) {
-                    textarea.value = lastContent;
-                    textarea.setSelectionRange(cursorPos + op.text.length, cursorPos + op.text.length);
-                } else {
-                    textarea.value = lastContent;
-                    textarea.setSelectionRange(cursorPos, cursorPos);
-                }
-            } else if (op.type === 'delete') {
-                lastContent = lastContent.slice(0, op.pos) + lastContent.slice(op.pos + op.length);
-                if (cursorPos > op.pos) {
-                    const newPos = Math.max(op.pos, cursorPos - op.length);
-                    textarea.value = lastContent;
-                    textarea.setSelectionRange(newPos, newPos);
-                } else {
-                    textarea.value = lastContent;
-                    textarea.setSelectionRange(cursorPos, cursorPos);
-                }
-            }
+            const time = new Date(createdAt).toLocaleTimeString();
+            
+            msgEl.innerHTML = `
+                <div class="message-content">${escapeHtml(content)}</div>
+                <div class="message-time">${time}</div>
+                <button class="delete-btn" onclick="deleteMessage('${id}')">×</button>
+            `;
+            
+            messagesDiv.appendChild(msgEl);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        function updateConnectionStatus(status) {
-            const el = document.getElementById('connectionStatus');
-            if (el) el.innerText = status;
-        }
-
-        function updateUserCount(count) {
-            const el = document.getElementById('userCount');
-            if (el) el.innerText = `👥 ${count} user(s)`;
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         function showCreateForm() {
@@ -160,11 +143,11 @@
 
         function backToMenu() {
             document.querySelectorAll('.form-section').forEach(f => f.classList.remove('active'));
-            document.getElementById('editor').classList.remove('active');
+            document.getElementById('chat').classList.remove('active');
             document.querySelector('.menu-section').style.display = 'block';
         }
 
-        async function createNote() {
+        async function createRoom() {
             const name = document.getElementById('createName').value.trim();
             const password = document.getElementById('createPassword').value;
             const errorEl = document.getElementById('createNameError');
@@ -175,7 +158,7 @@
             }
 
             try {
-                const res = await fetch(`${API_URL}/notes/create`, {
+                const res = await fetch(`${API_URL}/rooms/create`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name, password })
@@ -187,15 +170,15 @@
                     return;
                 }
 
-                currentNote = name;
+                currentRoom = name;
                 currentPassword = password;
-                openEditor();
+                openChat();
             } catch (err) {
                 errorEl.innerText = 'Connection error';
             }
         }
 
-        async function loginNote() {
+        async function loginRoom() {
             const name = document.getElementById('loginName').value.trim();
             const password = document.getElementById('loginPassword').value;
             const errorEl = document.getElementById('loginNameError');
@@ -206,7 +189,7 @@
             }
 
             try {
-                const res = await fetch(`${API_URL}/notes/login`, {
+                const res = await fetch(`${API_URL}/rooms/login`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name, password })
@@ -218,83 +201,70 @@
                     return;
                 }
 
-                currentNote = name;
+                currentRoom = name;
                 currentPassword = password;
-                lastContent = data.content || '';
-                version = data.version || 0;
-                document.getElementById('noteContent').value = lastContent;
-                openEditor();
+                openChat(data.posts);
             } catch (err) {
                 errorEl.innerText = 'Connection error';
             }
         }
 
-        function openEditor() {
+        function openChat(posts = []) {
             document.querySelectorAll('.form-section').forEach(f => f.classList.remove('active'));
-            document.getElementById('editor').classList.add('active');
-            document.getElementById('currentNoteName').innerText = `Note: ${currentNote}`;
+            document.getElementById('chat').classList.add('active');
+            document.getElementById('currentRoomName').innerText = currentRoom;
             
             if (!socket) initSocket();
             
-            socket.emit('join_note', {
-                name: currentNote,
+            socket.emit('join_room', {
+                name: currentRoom,
                 password: currentPassword
             });
 
-            const textarea = document.getElementById('noteContent');
-            textarea.addEventListener('input', (e) => {
-                if (isRemoteChange) return;
-                
-                const newContent = textarea.value;
-                const op = computeDelta(lastContent, newContent);
-                
-                if (op) {
-                    socket.emit('operation', {
-                        name: currentNote,
-                        op: op
-                    });
-                    lastContent = newContent;
-                }
+            document.getElementById('messages').innerHTML = '';
+            posts.forEach(post => {
+                addMessageToUI(post.id, post.content, post.created_at);
+            });
+            
+            document.getElementById('messageInput').focus();
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+            
+            if (!content) return;
+            
+            socket.emit('post_message', {
+                room: currentRoom,
+                content: content
+            });
+            
+            input.value = '';
+            input.focus();
+        }
+
+        function deleteMessage(postId) {
+            socket.emit('delete_post', {
+                room: currentRoom,
+                id: postId
             });
         }
 
-        function computeDelta(oldText, newText) {
-            if (oldText === newText) return null;
-            
-            let i = 0;
-            while (i < oldText.length && i < newText.length && oldText[i] === newText[i]) {
-                i++;
-            }
-            
-            let oldEnd = oldText.length - 1;
-            let newEnd = newText.length - 1;
-            
-            while (oldEnd >= i && newEnd >= i && oldText[oldEnd] === newText[newEnd]) {
-                oldEnd--;
-                newEnd--;
-            }
-            
-            const pos = i;
-            const deletedLength = oldEnd - i + 1;
-            const insertedText = newText.slice(i, newEnd + 1);
-            
-            if (deletedLength === 0) {
-                return { type: 'insert', pos: pos, text: insertedText };
-            } else if (insertedText.length === 0) {
-                return { type: 'delete', pos: pos, length: deletedLength };
-            } else {
-                return { type: 'delete', pos: pos, length: deletedLength };
+        function clearRoom() {
+            if (confirm('Clear all messages?')) {
+                socket.emit('clear_room', {
+                    room: currentRoom
+                });
             }
         }
 
         function logout() {
-            if (socket && currentNote) {
-                socket.emit('leave_note', { name: currentNote });
+            if (socket && currentRoom) {
+                socket.emit('leave_room', { room: currentRoom });
             }
-            currentNote = null;
+            currentRoom = null;
             currentPassword = null;
-            lastContent = '';
-            document.getElementById('noteContent').value = '';
             backToMenu();
         }
 
