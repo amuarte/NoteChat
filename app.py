@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
-import psycopg2
+import psycopg
 import os
 
 app = Flask(__name__, static_folder='.', static_url_path='')
@@ -12,7 +12,7 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 active_sessions = {}
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL)
     return conn
 
 def init_db():
