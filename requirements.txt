@@ -3,7 +3,7 @@ Flask-CORS==4.0.0
 Flask-SocketIO==5.3.5
 python-socketio==5.9.0
 python-engineio==4.8.0
-psycopg[binary]==3.1.12
+psycopg[binary]==3.3.2
 python-dotenv==1.0.0
 Werkzeug==2.3.0
 gunicorn==21.2.0
