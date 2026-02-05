@@ -22,7 +22,7 @@ def init_db():
         conn = get_db()
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS notes
-                     (name TEXT PRIMARY KEY, password TEXT, content TEXT)''')
+                     (name TEXT PRIMARY KEY, password TEXT, content TEXT, version INT DEFAULT 0)''')
         conn.commit()
         conn.close()
         print("Database initialized successfully")
@@ -60,7 +60,7 @@ def create():
             conn.close()
             return {'error': 'Note already exists'}, 400
         
-        c.execute('INSERT INTO notes VALUES (%s, %s, %s)', (name, password, ''))
+        c.execute('INSERT INTO notes VALUES (%s, %s, %s, %s)', (name, password, '', 0))
         conn.commit()
         conn.close()
         return {'success': True}
@@ -77,14 +77,14 @@ def login():
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute('SELECT password, content FROM notes WHERE name = %s', (name,))
+        c.execute('SELECT password, content, version FROM notes WHERE name = %s', (name,))
         row = c.fetchone()
         conn.close()
         
         if not row or row[0] != password:
             return {'error': 'Wrong name or password'}, 401
         
-        return {'content': row[1]}
+        return {'content': row[1], 'version': row[2]}
     except Exception as e:
         conn.close()
         return {'error': str(e)}, 500
@@ -97,7 +97,7 @@ def on_join(data):
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute('SELECT password, content FROM notes WHERE name = %s', (note_name,))
+        c.execute('SELECT password, content, version FROM notes WHERE name = %s', (note_name,))
         row = c.fetchone()
         conn.close()
         
@@ -108,27 +108,52 @@ def on_join(data):
         join_room(note_name)
         
         if note_name not in active_sessions:
-            active_sessions[note_name] = {'content': row[1], 'users': 0}
+            active_sessions[note_name] = {
+                'content': row[1],
+                'version': row[2],
+                'users': 0
+            }
         
         active_sessions[note_name]['users'] += 1
         
-        emit('content_update', {'content': active_sessions[note_name]['content']})
+        emit('sync', {
+            'content': active_sessions[note_name]['content'],
+            'version': active_sessions[note_name]['version']
+        })
         
-        emit('user_joined', {'users': active_sessions[note_name]['users']}, room=note_name, skip_sid=True)
+        emit('user_count', {'count': active_sessions[note_name]['users']}, room=note_name)
         
     except Exception as e:
         conn.close()
         emit('error', {'message': str(e)})
 
-@socketio.on('content_change')
-def on_content_change(data):
+@socketio.on('operation')
+def on_operation(data):
     note_name = data['name']
-    content = data['content']
+    op = data['op']
     
-    if note_name in active_sessions:
-        active_sessions[note_name]['content'] = content
+    if note_name not in active_sessions:
+        return
     
-    emit('content_update', {'content': content}, room=note_name, skip_sid=True)
+    session = active_sessions[note_name]
+    content = session['content']
+    
+    if op['type'] == 'insert':
+        pos = op['pos']
+        text = op['text']
+        content = content[:pos] + text + content[pos:]
+    elif op['type'] == 'delete':
+        pos = op['pos']
+        length = op['length']
+        content = content[:pos] + content[pos+length:]
+    
+    session['content'] = content
+    session['version'] += 1
+    
+    emit('operation', {
+        'op': op,
+        'version': session['version']
+    }, room=note_name, skip_sid=True)
 
 @socketio.on('leave_note')
 def on_leave(data):
@@ -143,8 +168,10 @@ def on_leave(data):
             conn = get_db()
             c = conn.cursor()
             try:
-                c.execute('UPDATE notes SET content = %s WHERE name = %s', 
-                         (active_sessions[note_name]['content'], note_name))
+                c.execute('UPDATE notes SET content = %s, version = %s WHERE name = %s', 
+                         (active_sessions[note_name]['content'], 
+                          active_sessions[note_name]['version'],
+                          note_name))
                 conn.commit()
                 conn.close()
                 del active_sessions[note_name]
@@ -152,8 +179,4 @@ def on_leave(data):
                 conn.close()
                 print(f"Error saving note: {e}")
         else:
-            emit('user_left', {'users': active_sessions[note_name]['users']}, room=note_name)
-
-if __name__ == '__main__':
-    debug_mode = os.environ.get('FLASK_ENV') == 'development'
-    socketio.run(app, debug=debug_mode, host='0.0.0.0', port=int(os.environ.get('PORT', 3000)), allow_unsafe_werkzeug=True)
+            emit('user_count', {'count': active_sessions[note_name]['users']}, room=note_name)
