@@ -89,8 +89,12 @@
             });
 
             socket.on('content_update', (data) => {
-                isUpdatingFromServer = true;
                 const textarea = document.getElementById('noteContent');
+                if (document.activeElement === textarea) {
+                    return;
+                }
+                
+                isUpdatingFromServer = true;
                 textarea.value = data.content;
                 isUpdatingFromServer = false;
             });
