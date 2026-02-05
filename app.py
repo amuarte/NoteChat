@@ -156,4 +156,4 @@ def on_leave(data):
 
 if __name__ == '__main__':
     debug_mode = os.environ.get('FLASK_ENV') == 'development'
-    socketio.run(app, debug=debug_mode, host='0.0.0.0', port=int(os.environ.get('PORT', 3000)))
+    socketio.run(app, debug=debug_mode, host='0.0.0.0', port=int(os.environ.get('PORT', 3000)), allow_unsafe_werkzeug=True)
