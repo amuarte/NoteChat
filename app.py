@@ -23,6 +23,9 @@ def init_db():
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS notes
                      (name TEXT PRIMARY KEY, password TEXT, content TEXT, version INT DEFAULT 0)''')
+        
+        c.execute('''ALTER TABLE notes ADD COLUMN IF NOT EXISTS version INT DEFAULT 0''')
+        
         conn.commit()
         conn.close()
         print("Database initialized successfully")
