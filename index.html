@@ -120,12 +120,12 @@
             const name = document.getElementById('loginName').value.trim();
             const password = document.getElementById('loginPassword').value;
             const errorEl = document.getElementById('loginNameError');
-
+        
             if (!name || !password) {
                 errorEl.innerText = 'Fill all fields';
                 return;
             }
-
+        
             try {
                 const res = await fetch(`${API_URL}/notes/login`, {
                     method: 'POST',
@@ -133,16 +133,16 @@
                     body: JSON.stringify({ name, password })
                 });
                 const data = await res.json();
-
+        
                 if (!res.ok) {
                     errorEl.innerText = data.error;
                     return;
                 }
-
+        
                 currentNote = name;
                 currentPassword = password;
                 openEditor();
-                document.getElementById('noteContent').value = data.content;
+                document.getElementById('noteContent').value = data.content || '';
             } catch (err) {
                 errorEl.innerText = 'Connection error';
             }
@@ -200,4 +200,5 @@
 </body>
 
 </html>
+
 
