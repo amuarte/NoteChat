@@ -180,3 +180,6 @@ def on_leave(data):
                 print(f"Error saving note: {e}")
         else:
             emit('user_count', {'count': active_sessions[note_name]['users']}, room=note_name)
+
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 3000)), allow_unsafe_werkzeug=True)
