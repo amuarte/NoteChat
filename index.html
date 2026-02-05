@@ -70,8 +70,9 @@
         let socket = null;
         let currentNote = null;
         let currentPassword = null;
-        let isUpdatingFromServer = false;
-        let lastLocalChange = 0;
+        let isRemoteChange = false;
+        let lastContent = '';
+        let version = 0;
 
         function initSocket() {
             socket = io(API_URL.replace('/api', ''), {
@@ -88,28 +89,51 @@
                 updateConnectionStatus('🔴 Disconnected');
             });
 
-            socket.on('content_update', (data) => {
+            socket.on('sync', (data) => {
+                lastContent = data.content;
+                version = data.version;
                 const textarea = document.getElementById('noteContent');
-                if (document.activeElement === textarea) {
-                    return;
-                }
-                
-                isUpdatingFromServer = true;
                 textarea.value = data.content;
-                isUpdatingFromServer = false;
             });
 
-            socket.on('user_joined', (data) => {
-                updateUserCount(data.users);
+            socket.on('operation', (data) => {
+                applyRemoteOperation(data.op);
+                version = data.version;
             });
 
-            socket.on('user_left', (data) => {
-                updateUserCount(data.users);
+            socket.on('user_count', (data) => {
+                updateUserCount(data.count);
             });
 
             socket.on('error', (data) => {
                 console.error('Socket error:', data.message);
             });
+        }
+
+        function applyRemoteOperation(op) {
+            const textarea = document.getElementById('noteContent');
+            const cursorPos = textarea.selectionStart;
+            
+            if (op.type === 'insert') {
+                lastContent = lastContent.slice(0, op.pos) + op.text + lastContent.slice(op.pos);
+                if (cursorPos >= op.pos) {
+                    textarea.value = lastContent;
+                    textarea.setSelectionRange(cursorPos + op.text.length, cursorPos + op.text.length);
+                } else {
+                    textarea.value = lastContent;
+                    textarea.setSelectionRange(cursorPos, cursorPos);
+                }
+            } else if (op.type === 'delete') {
+                lastContent = lastContent.slice(0, op.pos) + lastContent.slice(op.pos + op.length);
+                if (cursorPos > op.pos) {
+                    const newPos = Math.max(op.pos, cursorPos - op.length);
+                    textarea.value = lastContent;
+                    textarea.setSelectionRange(newPos, newPos);
+                } else {
+                    textarea.value = lastContent;
+                    textarea.setSelectionRange(cursorPos, cursorPos);
+                }
+            }
         }
 
         function updateConnectionStatus(status) {
@@ -119,7 +143,7 @@
 
         function updateUserCount(count) {
             const el = document.getElementById('userCount');
-            if (el) el.innerText = `📝 ${count} user(s) editing`;
+            if (el) el.innerText = `👥 ${count} user(s)`;
         }
 
         function showCreateForm() {
@@ -196,7 +220,9 @@
 
                 currentNote = name;
                 currentPassword = password;
-                document.getElementById('noteContent').value = data.content || '';
+                lastContent = data.content || '';
+                version = data.version || 0;
+                document.getElementById('noteContent').value = lastContent;
                 openEditor();
             } catch (err) {
                 errorEl.innerText = 'Connection error';
@@ -215,17 +241,50 @@
                 password: currentPassword
             });
 
-            document.getElementById('noteContent').addEventListener('input', () => {
-                if (isUpdatingFromServer) return;
+            const textarea = document.getElementById('noteContent');
+            textarea.addEventListener('input', (e) => {
+                if (isRemoteChange) return;
                 
-                lastLocalChange = Date.now();
-                const content = document.getElementById('noteContent').value;
+                const newContent = textarea.value;
+                const op = computeDelta(lastContent, newContent);
                 
-                socket.emit('content_change', {
-                    name: currentNote,
-                    content: content
-                });
+                if (op) {
+                    socket.emit('operation', {
+                        name: currentNote,
+                        op: op
+                    });
+                    lastContent = newContent;
+                }
             });
+        }
+
+        function computeDelta(oldText, newText) {
+            if (oldText === newText) return null;
+            
+            let i = 0;
+            while (i < oldText.length && i < newText.length && oldText[i] === newText[i]) {
+                i++;
+            }
+            
+            let oldEnd = oldText.length - 1;
+            let newEnd = newText.length - 1;
+            
+            while (oldEnd >= i && newEnd >= i && oldText[oldEnd] === newText[newEnd]) {
+                oldEnd--;
+                newEnd--;
+            }
+            
+            const pos = i;
+            const deletedLength = oldEnd - i + 1;
+            const insertedText = newText.slice(i, newEnd + 1);
+            
+            if (deletedLength === 0) {
+                return { type: 'insert', pos: pos, text: insertedText };
+            } else if (insertedText.length === 0) {
+                return { type: 'delete', pos: pos, length: deletedLength };
+            } else {
+                return { type: 'delete', pos: pos, length: deletedLength };
+            }
         }
 
         function logout() {
@@ -234,6 +293,7 @@
             }
             currentNote = null;
             currentPassword = null;
+            lastContent = '';
             document.getElementById('noteContent').value = '';
             backToMenu();
         }
