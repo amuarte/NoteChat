@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -53,10 +53,8 @@
         <div id="editor">
             <h2>Note editor</h2>
             <div class="note-name" id="currentNoteName"></div>
-            <textarea id="noteContent" placeholder="Start typing..."></textarea>
+            <textarea id="noteContent" placeholder="Start typing..." oninput="autoSave()"></textarea>
             <div class="editor-buttons">
-                <button onclick="saveNote()">Save</button>
-                <button class="secondary" onclick="refreshNote()">Refresh</button>
                 <button class="secondary" onclick="logout()">Logout</button>
             </div>
         </div>
@@ -66,6 +64,7 @@
         const API_URL = 'https://notechat-xoxh.onrender.com/api';
         let currentNote = null;
         let currentPassword = null;
+        let autoRefreshInterval = null;
 
         function showCreateForm() {
             document.querySelector('.menu-section').style.display = 'none';
@@ -120,12 +119,12 @@
             const name = document.getElementById('loginName').value.trim();
             const password = document.getElementById('loginPassword').value;
             const errorEl = document.getElementById('loginNameError');
-        
+
             if (!name || !password) {
                 errorEl.innerText = 'Fill all fields';
                 return;
             }
-        
+
             try {
                 const res = await fetch(`${API_URL}/notes/login`, {
                     method: 'POST',
@@ -133,12 +132,12 @@
                     body: JSON.stringify({ name, password })
                 });
                 const data = await res.json();
-        
+
                 if (!res.ok) {
                     errorEl.innerText = data.error;
                     return;
                 }
-        
+
                 currentNote = name;
                 currentPassword = password;
                 openEditor();
@@ -152,13 +151,14 @@
             document.querySelectorAll('.form-section').forEach(f => f.classList.remove('active'));
             document.getElementById('editor').classList.add('active');
             document.getElementById('currentNoteName').innerText = `Note: ${currentNote}`;
+            startAutoRefresh();
         }
 
-        async function saveNote() {
+        async function autoSave() {
             if (!currentNote) return;
 
             try {
-                const res = await fetch(`${API_URL}/notes/${currentNote}/save`, {
+                await fetch(`${API_URL}/notes/${currentNote}/save`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -166,39 +166,37 @@
                         password: currentPassword
                     })
                 });
-                const data = await res.json();
-
-                if (res.ok) {
-                    console.log('Note saved');
-                } else {
-                    console.log('Error: ' + data.error);
-                }
             } catch (err) {
-                console.log('Connection error');
+                console.log('Auto save failed');
             }
         }
 
-        async function refreshNote() {
+        async function autoRefresh() {
             if (!currentNote) return;
 
             try {
                 const res = await fetch(`${API_URL}/notes/${currentNote}`);
                 const data = await res.json();
-                document.getElementById('noteContent').value = data.content;
-                console.log('Note refreshed');
+                const textarea = document.getElementById('noteContent');
+                if (textarea.value !== data.content) {
+                    textarea.value = data.content;
+                }
             } catch (err) {
-                console.log('Connection error');
+                console.log('Auto refresh failed');
             }
         }
 
+        function startAutoRefresh() {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+            autoRefreshInterval = setInterval(autoRefresh, 2000);
+        }
+
         function logout() {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
             currentNote = null;
             currentPassword = null;
             backToMenu();
         }
     </script>
 </body>
-
 </html>
-
-
