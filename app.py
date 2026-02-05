@@ -3,13 +3,14 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import psycopg
 import os
+from datetime import datetime
+import uuid
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
-active_sessions = {}
 
 def get_db():
     if not DATABASE_URL:
@@ -21,11 +22,10 @@ def init_db():
     try:
         conn = get_db()
         c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS notes
-                     (name TEXT PRIMARY KEY, password TEXT, content TEXT, version INT DEFAULT 0)''')
-        
-        c.execute('''ALTER TABLE notes ADD COLUMN IF NOT EXISTS version INT DEFAULT 0''')
-        
+        c.execute('''CREATE TABLE IF NOT EXISTS rooms
+                     (name TEXT PRIMARY KEY, password TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS posts
+                     (id TEXT PRIMARY KEY, room_name TEXT, content TEXT, created_at TIMESTAMP, FOREIGN KEY(room_name) REFERENCES rooms(name) ON DELETE CASCADE)''')
         conn.commit()
         conn.close()
         print("Database initialized successfully")
@@ -46,8 +46,8 @@ def serve_index():
 def serve_static(path):
     return send_from_directory('.', path)
 
-@app.route('/api/notes/create', methods=['POST'])
-def create():
+@app.route('/api/rooms/create', methods=['POST'])
+def create_room():
     data = request.json
     name = data.get('name', '').strip()
     password = data.get('password', '')
@@ -58,12 +58,12 @@ def create():
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute('SELECT name FROM notes WHERE name = %s', (name,))
+        c.execute('SELECT name FROM rooms WHERE name = %s', (name,))
         if c.fetchone():
             conn.close()
-            return {'error': 'Note already exists'}, 400
+            return {'error': 'Room already exists'}, 400
         
-        c.execute('INSERT INTO notes VALUES (%s, %s, %s, %s)', (name, password, '', 0))
+        c.execute('INSERT INTO rooms VALUES (%s, %s)', (name, password))
         conn.commit()
         conn.close()
         return {'success': True}
@@ -71,8 +71,8 @@ def create():
         conn.close()
         return {'error': str(e)}, 500
 
-@app.route('/api/notes/login', methods=['POST'])
-def login():
+@app.route('/api/rooms/login', methods=['POST'])
+def login_room():
     data = request.json
     name = data.get('name', '').strip()
     password = data.get('password', '')
@@ -80,27 +80,31 @@ def login():
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute('SELECT password, content, version FROM notes WHERE name = %s', (name,))
+        c.execute('SELECT password FROM rooms WHERE name = %s', (name,))
         row = c.fetchone()
-        conn.close()
         
         if not row or row[0] != password:
+            conn.close()
             return {'error': 'Wrong name or password'}, 401
         
-        return {'content': row[1], 'version': row[2]}
+        c.execute('SELECT id, content, created_at FROM posts WHERE room_name = %s ORDER BY created_at ASC', (name,))
+        posts = [{'id': p[0], 'content': p[1], 'created_at': p[2].isoformat()} for p in c.fetchall()]
+        conn.close()
+        
+        return {'posts': posts}
     except Exception as e:
         conn.close()
         return {'error': str(e)}, 500
 
-@socketio.on('join_note')
+@socketio.on('join_room')
 def on_join(data):
-    note_name = data['name']
+    room_name = data['name']
     password = data['password']
     
     conn = get_db()
     c = conn.cursor()
     try:
-        c.execute('SELECT password, content, version FROM notes WHERE name = %s', (note_name,))
+        c.execute('SELECT password FROM rooms WHERE name = %s', (room_name,))
         row = c.fetchone()
         conn.close()
         
@@ -108,81 +112,78 @@ def on_join(data):
             emit('error', {'message': 'Invalid credentials'})
             return
         
-        join_room(note_name)
-        
-        if note_name not in active_sessions:
-            active_sessions[note_name] = {
-                'content': row[1],
-                'version': row[2],
-                'users': 0
-            }
-        
-        active_sessions[note_name]['users'] += 1
-        
-        emit('sync', {
-            'content': active_sessions[note_name]['content'],
-            'version': active_sessions[note_name]['version']
-        })
-        
-        emit('user_count', {'count': active_sessions[note_name]['users']}, room=note_name)
+        join_room(room_name)
+        emit('user_joined', {'room': room_name}, room=room_name, skip_sid=True)
         
     except Exception as e:
         conn.close()
         emit('error', {'message': str(e)})
 
-@socketio.on('operation')
-def on_operation(data):
-    note_name = data['name']
-    op = data['op']
+@socketio.on('post_message')
+def on_post_message(data):
+    room_name = data['room']
+    content = data['content']
     
-    if note_name not in active_sessions:
-        return
+    post_id = str(uuid.uuid4())
+    created_at = datetime.now().isoformat()
     
-    session = active_sessions[note_name]
-    content = session['content']
-    
-    if op['type'] == 'insert':
-        pos = op['pos']
-        text = op['text']
-        content = content[:pos] + text + content[pos:]
-    elif op['type'] == 'delete':
-        pos = op['pos']
-        length = op['length']
-        content = content[:pos] + content[pos+length:]
-    
-    session['content'] = content
-    session['version'] += 1
-    
-    emit('operation', {
-        'op': op,
-        'version': session['version']
-    }, room=note_name, skip_sid=True)
-
-@socketio.on('leave_note')
-def on_leave(data):
-    note_name = data['name']
-    
-    leave_room(note_name)
-    
-    if note_name in active_sessions:
-        active_sessions[note_name]['users'] -= 1
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute('INSERT INTO posts (id, room_name, content, created_at) VALUES (%s, %s, %s, %s)',
+                 (post_id, room_name, content, created_at))
+        conn.commit()
+        conn.close()
         
-        if active_sessions[note_name]['users'] <= 0:
-            conn = get_db()
-            c = conn.cursor()
-            try:
-                c.execute('UPDATE notes SET content = %s, version = %s WHERE name = %s', 
-                         (active_sessions[note_name]['content'], 
-                          active_sessions[note_name]['version'],
-                          note_name))
-                conn.commit()
-                conn.close()
-                del active_sessions[note_name]
-            except Exception as e:
-                conn.close()
-                print(f"Error saving note: {e}")
-        else:
-            emit('user_count', {'count': active_sessions[note_name]['users']}, room=note_name)
+        emit('new_post', {
+            'id': post_id,
+            'content': content,
+            'created_at': created_at
+        }, room=room_name)
+        
+    except Exception as e:
+        conn.close()
+        emit('error', {'message': str(e)})
+
+@socketio.on('delete_post')
+def on_delete_post(data):
+    room_name = data['room']
+    post_id = data['id']
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM posts WHERE id = %s AND room_name = %s', (post_id, room_name))
+        conn.commit()
+        conn.close()
+        
+        emit('post_deleted', {'id': post_id}, room=room_name)
+        
+    except Exception as e:
+        conn.close()
+        emit('error', {'message': str(e)})
+
+@socketio.on('clear_room')
+def on_clear_room(data):
+    room_name = data['room']
+    
+    conn = get_db()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM posts WHERE room_name = %s', (room_name,))
+        conn.commit()
+        conn.close()
+        
+        emit('room_cleared', {}, room=room_name)
+        
+    except Exception as e:
+        conn.close()
+        emit('error', {'message': str(e)})
+
+@socketio.on('leave_room')
+def on_leave_room(data):
+    room_name = data['room']
+    leave_room(room_name)
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 3000)), allow_unsafe_werkzeug=True)
