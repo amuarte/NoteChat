@@ -13,12 +13,18 @@ def get_db():
     return conn
 
 def init_db():
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS notes
-                 (name TEXT PRIMARY KEY, password TEXT, content TEXT)''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS notes
+                     (name TEXT PRIMARY KEY, password TEXT, content TEXT)''')
+        conn.commit()
+        conn.close()
+        print("Database initialized successfully")
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+        import traceback
+        traceback.print_exc()
 
 init_db()
 
