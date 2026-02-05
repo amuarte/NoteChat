@@ -82,7 +82,7 @@ def login():
         conn.close()
         return {'error': str(e)}, 500
 
-@app.route('/api/notes/<n>', methods=['GET'])
+@app.route('/api/notes/<name>', methods=['GET'])
 def get_note(name):
     conn = get_db()
     c = conn.cursor()
@@ -98,7 +98,7 @@ def get_note(name):
         conn.close()
         return {'error': str(e)}, 500
 
-@app.route('/api/notes/<n>/save', methods=['POST'])
+@app.route('/api/notes/<name>/save', methods=['POST'])
 def save(name):
     data = request.json
     content = data.get('content', '')
